@@ -308,6 +308,27 @@ F.forEach(id => $(id).onchange = () => {
 });
 syncFields();
 
+/* 백그라운드(알트탭)에서도 멈추지 않게: 타이머를 워커에서 돌리고(탭 타이머 감속 회피), 웹 락 + 무음 오디오로 '활성 탭' 상태 유지 */
+function startTicker(fn, ms) {
+  try {
+    const url = URL.createObjectURL(new Blob([`setInterval(()=>postMessage(0),${ms})`], { type: 'text/javascript' }));
+    const w = new Worker(url); w.onmessage = fn; w.url = url; return w;
+  } catch { return { fallback: setInterval(fn, ms) } }
+}
+function stopTicker(t) { if (!t) return; if (t.fallback) clearInterval(t.fallback); else { t.terminate(); URL.revokeObjectURL(t.url) } }
+let lockRel = null, keepOsc = null;
+function keepAwake() {
+  try { if (navigator.locks) navigator.locks.request('check-keepalive', () => new Promise(res => { lockRel = res })) } catch {}
+  try {
+    ac = ac || new AudioContext(); if (ac.state === 'suspended') ac.resume();
+    keepOsc = ac.createOscillator(); const g = ac.createGain(); g.gain.value = 0.0002; keepOsc.frequency.value = 30;
+    keepOsc.connect(g); g.connect(ac.destination); keepOsc.start();
+  } catch {}
+}
+function releaseAwake() {
+  try { lockRel && lockRel() } catch {} lockRel = null;
+  try { keepOsc && keepOsc.stop() } catch {} keepOsc = null;
+}
 async function startShare() {
   ac = ac || new AudioContext();
   try { stream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 5 }, audio: false }) }
@@ -315,11 +336,11 @@ async function startShare() {
   vid.srcObject = stream; await vid.play(); syncFields();
   stream.getVideoTracks()[0].onended = stopShare;
   potNext = 0; missSince = 0; lastPot = 0; tpls.forEach(t => t.pos = null);
-  $('share').textContent = '공유 중지'; loop = setInterval(scan, 500); log('화면 감지 시작');
+  $('share').textContent = '공유 중지'; loop = startTicker(scan, 500); keepAwake(); log('화면 감지 시작');
   cv.scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
 function stopShare() {
-  clearInterval(loop); loop = null;
+  stopTicker(loop); loop = null; releaseAwake();
   stream && stream.getTracks().forEach(t => t.stop()); stream = null; vid.srcObject = null;
   $('share').textContent = '화면 공유 시작'; mag.style.display = 'none'; syncFields(); log('화면 감지 중지');
 }
