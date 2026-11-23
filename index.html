@@ -60,6 +60,7 @@ input[type=color]{width:44px;height:30px;padding:0;border:1px solid var(--bd);bo
     <button id="mColor" class="ghost">색 선택</button>
     <button id="mPot" class="ghost">물약 영역 지정</button>
     <button id="pDef" class="ghost">물약 영역: 우측 상단</button>
+    <button id="mAdd" class="ghost">내 아이콘 추가</button>
         색 <input id="cpick" type="color">
     R <input id="cr" type="number" min="0" max="255"> G <input id="cg" type="number" min="0" max="255"> B <input id="cb" type="number" min="0" max="255">
     허용오차 <input id="tol" type="number" min="0" max="255">
@@ -71,8 +72,10 @@ input[type=color]{width:44px;height:30px;padding:0;border:1px solid var(--bd);bo
     너비 <input id="rw" type="number" min="1"> 높이 <input id="rh" type="number" min="1">
     <span class="hint" id="vsize"></span>
   </div>
+  <div class="hint" id="potst"></div>
+  <div class="row" id="mine"></div>
   <canvas id="cv" width="480" height="270"></canvas>
-  <p class="hint">영역 지정 모드: 드래그하면 감지 영역(노란 박스)이 정해져요. 색 선택 모드: 클릭한 지점의 색이 감지 색이 됩니다(Shift+클릭은 어느 모드에서나 색 선택).  물약 알림: 재획비·소재비 이미지 4개(아이콘 전체, 숫자 부분 제외) 중 하나라도 보이면 정상이고, 하나도 5초 이상 안 보이면 알려줘요(5초마다 검사, 사라진 뒤 알림은 1회만). 물약 검사는 기본으로 화면 우측 상단(1/4)만 보고, ‘물약 영역 지정’ 후 드래그하면 바꿀 수 있어요(청록색 점선 박스).</p>
+  <p class="hint">영역 지정 모드: 드래그하면 감지 영역(노란 박스)이 정해져요. 색 선택 모드: 클릭한 지점의 색이 감지 색이 됩니다(Shift+클릭은 어느 모드에서나 색 선택).  물약 알림: 재획비·소재비 이미지 4개(아이콘 전체, 숫자 부분 제외) 중 하나라도 보이면 정상이고, 하나도 5초 이상 안 보이면 알려줘요(5초마다 검사, 사라진 뒤 알림은 1회만). 물약 검사는 기본으로 화면 우측 상단(1/4)만 보고, ‘물약 영역 지정’ 후 드래그하면 바꿀 수 있어요(청록색 점선 박스). 다른 컴퓨터라서 아이콘 크기가 달라도 70~150% 배율을 자동으로 찾아요. 그래도 안 잡히면 ‘내 아이콘 추가’를 누르고 화면에 보이는 물약 아이콘의 숫자 없는 부분을 드래그해서 등록하세요(내가 등록한 아이콘은 이 브라우저에 저장돼요).</p>
 </section>
 
 <section class="card"><h2>기록</h2><ul id="log"></ul></section>
@@ -159,10 +162,11 @@ const mag = $('mag'), mc = $('mc'), mx = mc.getContext('2d', { willReadFrequentl
 const match = (r, g, b) => Math.abs(r - col[0]) <= TOL && Math.abs(g - col[1]) <= TOL && Math.abs(b - col[2]) <= TOL;
 
 /* 색 / 허용오차 / 최소 픽셀 설정 */
-const setMode = m => { mode = m; $('mRegion').classList.toggle('on', m === 'region'); $('mColor').classList.toggle('on', m === 'color'); $('mPot').classList.toggle('on', m === 'pot') };
+const setMode = m => { mode = m; $('mRegion').classList.toggle('on', m === 'region'); $('mColor').classList.toggle('on', m === 'color'); $('mPot').classList.toggle('on', m === 'pot'); $('mAdd').classList.toggle('on', m === 'add') };
 $('mRegion').onclick = () => setMode('region');
 $('mColor').onclick = () => setMode('color');
 $('mPot').onclick = () => setMode('pot');
+$('mAdd').onclick = () => { setMode('add'); log('내 아이콘 추가: 화면 미리보기에서 물약 아이콘의 숫자 없는 부분을 드래그하세요 (가로·세로 16~120픽셀)') };
 $('pDef').onclick = () => setPreg({ x: .5, y: 0, w: .5, h: .5 });
 function setPreg(r) {
   const vw = vid.videoWidth, vh = vid.videoHeight;
@@ -189,10 +193,10 @@ const DEF_TPLS = [
 ];   // 기본 물약 이미지 4개: 아이콘 전체(왼쪽 아래 숫자 부분은 비교에서 제외)
 const tset = { ncc: 0.84, miss: 5, every: 5, rep: 60 };   // ncc: 모양 유사도 기준(0~1), miss: 안 보임 판정(초), every: 물약 검사 간격(초), rep: 물약 알림 반복 간격(초)
 const fc = document.createElement('canvas'), fctx = fc.getContext('2d', { willReadFrequently: true });
-function buildTpl(c) {
+function buildTpl(c, noskip) {
   /* 아이콘 전체를 비교하되, 숫자가 나오는 곳은 제외: 왼쪽 아래 작은 숫자(1분 이상), 가운데 큰 숫자(1분 미만) */
   const w = c.width, h = c.height, data = c.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, w, h).data;
-  const skip = (i, j) => (j >= h * .55 && i < w * .52) || (j >= h * .28 && j < h * .72 && i >= w * .27 && i < w * .80);
+  const skip = noskip ? () => false : (i, j) => (j >= h * .55 && i < w * .52) || (j >= h * .28 && j < h * .72 && i >= w * .27 && i < w * .80);
   const lumAt = k => .299 * data[k * 4] + .587 * data[k * 4 + 1] + .114 * data[k * 4 + 2];
   const ox = [], oy = [], tl = []; let mean = 0;
   for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) if (!skip(i, j)) { ox.push(i); oy.push(j); const l = lumAt(j * w + i); tl.push(l); mean += l }
@@ -235,7 +239,7 @@ function findTpl(L, W, H, t) {
     for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
       const base = y * W + x; let miss = 0;
       for (let q = 0; q < P; q++) { const d = L[base + pa[q]] - L[base + pb[q]]; if (d * sg[q] <= 0 && (++miss > allow || (q === 2 && miss === 3))) { miss = 99; break } }
-      if (miss <= allow && score(base) >= tset.ncc) return { x, y };
+      if (miss <= allow) { const sc = score(base); if (sc >= tset.ncc) return { x, y, s: sc } }
     }
     return null;
   };
@@ -245,13 +249,41 @@ function findTpl(L, W, H, t) {
   }
   return scanRows(0, W - w, 0, H - h);
 }
-const loadImg = u => new Promise(res => { const im = new Image(); im.onload = () => res(im); im.onerror = () => res(null); im.src = u });
-(async () => {
-  for (const it of DEF_TPLS) {
-    const im = await loadImg(it.url); if (!im) continue;
-    const c = document.createElement('canvas'); c.width = im.width; c.height = im.height; c.getContext('2d').drawImage(im, 0, 0);
-    tpls.push(buildTpl(c));
+const SCALES = [1, .9, 1.1, .8, 1.2, .7, 1.35, 1.5];   // 다른 컴퓨터/UI 크기 대응: 아이콘 배율 후보
+let lastWide = 0;
+function mkTpl(name, src, custom) { return { name, src, custom, vars: {}, sc: 1, locked: false, pos: null, sco: 0, w: src.width, h: src.height } }
+function variant(t, s) {
+  if (!t.vars[s]) {
+    let c = t.src;
+    if (s !== 1) { const w = Math.max(16, Math.round(t.src.width * s)), h = Math.max(16, Math.round(t.src.height * s)); c = document.createElement('canvas'); c.width = w; c.height = h; const g = c.getContext('2d'); g.imageSmoothingQuality = 'high'; g.drawImage(t.src, 0, 0, w, h) }
+    t.vars[s] = buildTpl(c, t.custom);
   }
+  return t.vars[s];
+}
+function findAny(L, W, H, t, scales) {
+  for (const s of scales) {
+    const v = variant(t, s); if (v.w > W || v.h > H || v.n < 40) continue;
+    v.pos = s === t.sc ? t.pos : null;
+    const r = findTpl(L, W, H, v);
+    if (r) { t.pos = { x: r.x, y: r.y }; t.sc = s; t.w = v.w; t.h = v.h; t.sco = r.s; t.locked = true; return true }
+  }
+  t.pos = null; return false;
+}
+const loadImg = u => new Promise(res => { const im = new Image(); im.onload = () => res(im); im.onerror = () => res(null); im.src = u });
+const toCanvas = im => { const c = document.createElement('canvas'); c.width = im.width; c.height = im.height; c.getContext('2d').drawImage(im, 0, 0); return c };
+let mineList = load('ctpls', []);
+function renderMine() {
+  $('mine').innerHTML = '';
+  mineList.forEach((m, i) => {
+    const b = document.createElement('button'); b.className = 'ghost'; b.textContent = m.name + ' ✕'; b.title = '이 아이콘 삭제';
+    b.onclick = () => { mineList.splice(i, 1); save('ctpls', mineList); tpls = tpls.filter(t => t.mineUrl !== m.url); renderMine(); lastPot = 0 };
+    $('mine').appendChild(b);
+  });
+}
+(async () => {
+  for (const it of DEF_TPLS) { const im = await loadImg(it.url); if (im) tpls.push(mkTpl(it.name, toCanvas(im), false)) }
+  for (const m of mineList) { const im = await loadImg(m.url); if (im) { const t = mkTpl(m.name, toCanvas(im), true); t.mineUrl = m.url; tpls.push(t) } }
+  renderMine();
 })();
 const chk = Object.assign({ col: true, pot: true }, load('chk', {}));
 $('colchk').checked = chk.col; $('potchk').checked = chk.pot;
@@ -303,7 +335,7 @@ function drawPreview() {
   if (cv.width !== PW || cv.height !== PH) { cv.width = PW; cv.height = PH }
   cx.drawImage(vid, 0, 0, PW, PH);
   const r = rectNow();
-  cx.strokeStyle = drag && mode === 'pot' ? '#00e5ff' : '#ffe600'; cx.lineWidth = 3;
+  cx.strokeStyle = drag && (mode === 'pot' || mode === 'add') ? '#00e5ff' : '#ffe600'; cx.lineWidth = 3;
   cx.strokeRect(r.x * PW, r.y * PH, Math.max(2, r.w * PW), Math.max(2, r.h * PH));
   if ($('potchk').checked && !(drag && mode === 'pot')) { cx.strokeStyle = '#00e5ff'; cx.lineWidth = 2; cx.setLineDash([8, 5]); cx.strokeRect(preg.x * PW, preg.y * PH, preg.w * PW, preg.h * PH); cx.setLineDash([]) }
   cx.strokeStyle = '#39ff14'; cx.lineWidth = 2;
@@ -335,7 +367,12 @@ function scan() {
     fctx.drawImage(vid, rx, ry, rw, rh, 0, 0, rw, rh);   // 지정한 영역만 잘라서 검사 → CPU 절약
     const fd = fctx.getImageData(0, 0, rw, rh).data, now = Date.now(), L = lumaOf(fd, rw * rh);
     let any = false;
-    tpls.forEach(t => { t.pos = findTpl(L, rw, rh, t); if (t.pos) any = true });
+    tpls.forEach(t => { if (findAny(L, rw, rh, t, [t.sc])) any = true });
+    if (!any && (!tpls.some(t => t.locked) || now - lastWide >= 20000)) {   // 배율이 안 맞을 수 있으니 다른 배율도 검사 (처음엔 매번, 이후엔 20초마다)
+      lastWide = now; tpls.forEach(t => { if (findAny(L, rw, rh, t, SCALES.filter(s => s !== t.sc))) any = true });
+    }
+    const ft = tpls.find(t => t.pos); if (ft) tpls.forEach(t => { if (!t.pos) t.sc = ft.sc });   // UI 배율은 모두 같으니 공유
+    $('potst').textContent = ft ? '물약 인식 ✔ ' + tpls.filter(t => t.pos).map(t => `${t.name} 일치도 ${(t.sco * 100).toFixed(0)}%`).join(', ') + ` · 아이콘 배율 ${Math.round(ft.sc * 100)}%` : '물약 인식 ✘ 안 보임' + (missSince ? ` (${Math.round((now - missSince) / 1000)}초째)` : '');
     if (any) { missSince = 0; potNext = 0 }   // 4개 중 하나라도 보이면 정상 (알림 다시 준비)
     else {
       if (!missSince) missSince = now;
@@ -392,7 +429,20 @@ window.addEventListener('mouseup', () => {
   if (!drag) return;
   const r = rectNow();
   if (r.w > .005 && r.h > .005) {
-    if (mode === 'pot') { setPreg({ x: r.x, y: r.y, w: r.w, h: r.h }); setMode('region') }
+    if (mode === 'add') {
+      const vw = vid.videoWidth, vh = vid.videoHeight, w = Math.round(r.w * vw), h = Math.round(r.h * vh);
+      if (w < 16 || h < 16 || w > 120 || h > 120) log(`아이콘 크기가 안 맞아요 (지금 ${w}×${h}, 가로·세로 16~120픽셀)`);
+      else {
+        const c = document.createElement('canvas'); c.width = w; c.height = h;
+        c.getContext('2d').drawImage(vid, Math.round(r.x * vw), Math.round(r.y * vh), w, h, 0, 0, w, h);
+        const url = c.toDataURL('image/png'), name = '내 아이콘 ' + (mineList.length + 1);
+        mineList.push({ name, url }); save('ctpls', mineList);
+        const t = mkTpl(name, c, true); t.mineUrl = url; tpls.push(t); renderMine(); lastPot = 0; missSince = 0; potNext = 0;
+        log(name + ' 등록됨 (' + w + '×' + h + ')');
+      }
+      setMode('region');
+    }
+    else if (mode === 'pot') { setPreg({ x: r.x, y: r.y, w: r.w, h: r.h }); setMode('region') }
     else { reg = { x: r.x, y: r.y, w: r.w, h: r.h }; save('reg', reg); syncFields() }
   }
   drag = dragNow = null; drawPreview();
